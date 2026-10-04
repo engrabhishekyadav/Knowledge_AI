@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.core.config import settings
-from app.core.database import active_db_type
+from app.core.database import get_active_db_type
 from app.schemas.ai import HealthResponse
 
 router = APIRouter(prefix="/health", tags=["Health"])
@@ -11,8 +11,9 @@ async def health_check():
     return {
         "status": "healthy",
         "appName": settings.APP_NAME,
-        "dbEngine": active_db_type,
+        "dbEngine": get_active_db_type(),
         "llmProvider": settings.LLM_PROVIDER,
         "llmModel": active_model,
-        "vectorDimension": settings.VECTOR_DIMENSION
+        "vectorDimension": settings.VECTOR_DIMENSION,
+        "geminiEmbeddingConfigured": bool(settings.GEMINI_API_KEY)
     }

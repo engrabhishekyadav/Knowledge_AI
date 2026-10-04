@@ -3,5 +3,6 @@ from app.models.user import User
 from app.models.note import Note
 from app.models.task import Task
 from app.models.message import ChatMessage
+from app.models.chunk import DocumentChunk
 
-__all__ = ["Base", "TimestampMixin", "User", "Note", "Task", "ChatMessage"]
+__all__ = ["Base", "TimestampMixin", "User", "Note", "Task", "ChatMessage", "DocumentChunk"]

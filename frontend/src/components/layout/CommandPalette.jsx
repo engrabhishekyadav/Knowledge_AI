@@ -9,6 +9,7 @@ import {
   X
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { hybridSearchNotes } from '../../services/api/index.js';
 
 export const CommandPalette = () => {
   const {
@@ -25,12 +26,14 @@ export const CommandPalette = () => {
 
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [semanticMatches, setSemanticMatches] = useState([]);
   const inputRef = useRef(null);
 
   useEffect(() => {
     if (isCmdKOpen) {
       setQuery('');
       setSelectedIndex(0);
+      setSemanticMatches([]);
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isCmdKOpen]);
@@ -38,11 +41,39 @@ export const CommandPalette = () => {
   // Compute search results
   const lowerQ = query.toLowerCase().trim();
 
+  // Debounced semantic search via backend pgvector hybrid search
+  useEffect(() => {
+    if (!lowerQ || lowerQ.length < 2) {
+      setSemanticMatches([]);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        const results = await hybridSearchNotes(lowerQ, 0.65);
+        if (active && Array.isArray(results)) {
+          setSemanticMatches(results.slice(0, 4));
+        }
+      } catch {
+        if (active) setSemanticMatches([]);
+      }
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [lowerQ]);
+
+  const semanticNoteIds = new Set(semanticMatches.map(m => m.id));
+
   const filteredNotes = notes.filter(n => 
-    !lowerQ || 
-    n.title.toLowerCase().includes(lowerQ) || 
-    n.tags.some(t => t.toLowerCase().includes(lowerQ)) ||
-    n.content.toLowerCase().includes(lowerQ)
+    !semanticNoteIds.has(n.id) && (
+      !lowerQ || 
+      n.title.toLowerCase().includes(lowerQ) || 
+      n.tags?.some(t => t.toLowerCase().includes(lowerQ)) ||
+      n.content?.toLowerCase().includes(lowerQ)
+    )
   ).slice(0, 4);
 
   const filteredTasks = tasks.filter(t => 
@@ -86,10 +117,24 @@ export const CommandPalette = () => {
   ];
 
   const allItems = [
+    ...semanticMatches.map(m => ({
+      id: 'semantic-' + m.id,
+      title: m.title,
+      subtitle: `${m.category || 'General'} • ${Math.round((m.matchScore || 0) * 100)}% semantic relevance`,
+      category: 'Semantic RAG',
+      badge: `${Math.round((m.matchScore || 0) * 100)}%`,
+      icon: Sparkles,
+      isSemantic: true,
+      run: () => {
+        setActiveNoteId(m.id);
+        setActiveTab('notes');
+        setIsCmdKOpen(false);
+      }
+    })),
     ...filteredNotes.map(n => ({
       id: 'note-' + n.id,
       title: n.title,
-      subtitle: n.category + ' • ' + n.tags.join(', '),
+      subtitle: n.category + ' • ' + (n.tags || []).join(', '),
       category: 'Notes',
       icon: FileText,
       run: () => {
@@ -180,29 +225,42 @@ export const CommandPalette = () => {
                   onMouseEnter={() => setSelectedIndex(idx)}
                   className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl cursor-pointer transition-colors ${
                     isSelected
-                      ? 'bg-indigo-600/25 border border-indigo-500/40 text-slate-100'
+                      ? item.isSemantic
+                        ? 'bg-cyan-950/40 border border-cyan-500/40 text-slate-100'
+                        : 'bg-indigo-600/25 border border-indigo-500/40 text-slate-100'
                       : 'hover:bg-slate-800/60 text-slate-300 border border-transparent'
                   }`}
                 >
                   <div className="flex items-center gap-3 truncate">
                     <div className={`p-2 rounded-lg shrink-0 ${
-                      isSelected ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'
+                      item.isSemantic
+                        ? isSelected ? 'bg-cyan-500 text-slate-950 font-bold' : 'bg-cyan-950/60 text-cyan-400 border border-cyan-800/60'
+                        : isSelected ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'
                     }`}>
                       <Icon className="w-4 h-4" />
                     </div>
                     <div className="truncate">
                       <p className="text-sm font-medium truncate">{item.title}</p>
                       {item.subtitle && (
-                        <p className="text-xs text-slate-500 truncate">{item.subtitle}</p>
+                        <p className={`text-xs truncate ${item.isSemantic ? 'text-cyan-400/80 font-mono' : 'text-slate-500'}`}>{item.subtitle}</p>
                       )}
                     </div>
                   </div>
                   
                   <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <span className="text-[10px] uppercase font-mono tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">
+                    {item.badge && (
+                      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                        {item.badge}
+                      </span>
+                    )}
+                    <span className={`text-[10px] uppercase font-mono tracking-wider px-2 py-0.5 rounded border ${
+                      item.isSemantic
+                        ? 'bg-cyan-950/40 text-cyan-400 border-cyan-800/60'
+                        : 'bg-slate-800 text-slate-400 border-slate-700/50'
+                    }`}>
                       {item.category}
                     </span>
-                    {isSelected && <ArrowRight className="w-4 h-4 text-indigo-400" />}
+                    {isSelected && <ArrowRight className={`w-4 h-4 ${item.isSemantic ? 'text-cyan-400' : 'text-indigo-400'}`} />}
                   </div>
                 </div>
               );

@@ -8,7 +8,7 @@ class Task(Base, TimestampMixin):
     __tablename__ = "tasks"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: f"task-{uuid.uuid4().hex[:8]}")
-    user_id: Mapped[Optional[str]] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), default="todo", index=True) # todo, in_progress, done

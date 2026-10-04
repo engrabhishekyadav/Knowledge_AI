@@ -33,7 +33,16 @@ A full-stack, enterprise-grade AI productivity and knowledge management workspac
 
 ## ⚡ Quick Start
 
-### 1. Backend Setup
+### 0. Instant Docker Quick Start (Recommended)
+Run the entire stack (PostgreSQL 16 with `pgvector`, FastAPI backend, and Vite frontend) with a single command:
+```bash
+docker compose up --build
+```
+* **Frontend**: `http://localhost:5173`
+* **FastAPI Docs**: `http://localhost:8000/docs`
+* **PostgreSQL + pgvector**: `localhost:5433`
+
+### 1. Manual Backend Setup
 ```bash
 cd backend
 
@@ -50,10 +59,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Configure environment variables
-# Copy .env.example to .env and set your GEMINI_API_KEY (or OPENROUTER_API_KEY)
 copy .env.example .env
 
-# Run FastAPI backend
+# Optional: Run Alembic database migrations
+alembic upgrade head
+
+# Run FastAPI backend (Auto-creates tables if PostgreSQL or SQLite fallback)
 python run.py
 ```
 Backend will start at: `http://127.0.0.1:8000` (API Docs at `http://127.0.0.1:8000/docs`)
@@ -74,19 +85,23 @@ Frontend will be live at: `http://localhost:5173`
 
 ## 🧪 Testing
 
-Run backend tests from the `backend/` folder:
+### Automated Pytest Suite (AsyncClient)
+Run the comprehensive test suite (Auth, Multi-Tenant Notes isolation, Tasks, RAG chunking & reranker) without needing a live server:
 ```bash
-# Test Authentication & JWT flow
+cd backend
+pytest tests -v
+```
+
+### Standalone Live Integration Tests
+Run tests against a running backend server (`http://127.0.0.1:8000`):
+```bash
+cd backend
 python test_auth.py
-
-# Test Document Ingestion & AI SSE Streaming
 python test_doc_upload.py
-
-# Test Full-Stack Integration
 python test_integration.py
 ```
 
-Run frontend linting & production build:
+### Frontend Linting & Production Build
 ```bash
 cd frontend
 npx oxlint

@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.task import TaskCreate, TaskUpdate, TaskStatusUpdate, TaskResponse, BatchTasksCreate
-from app.services.auth import get_current_user
+from app.services.auth import get_required_current_user
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -17,37 +17,39 @@ async def list_tasks(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     tag: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user),
+    limit: Optional[int] = Query(None, ge=1, le=100, description="Max tasks to return"),
+    offset: Optional[int] = Query(None, ge=0, description="Number of tasks to skip"),
+    current_user: User = Depends(get_required_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    if not current_user:
-        return []
+    stmt = select(Task).where(Task.user_id == current_user.id)
+    if status:
+        stmt = stmt.where(Task.status == status)
+    if priority:
+        stmt = stmt.where(Task.priority == priority)
+    stmt = stmt.order_by(Task.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    if offset is not None:
+        stmt = stmt.offset(offset)
 
-    stmt = select(Task).where(Task.user_id == current_user.id).order_by(Task.created_at.desc())
     res = await db.execute(stmt)
     tasks = res.scalars().all()
 
-    filtered = []
-    for t in tasks:
-        if status and t.status != status:
-            continue
-        if priority and t.priority != priority:
-            continue
-        if tag and (not t.tags or tag not in t.tags):
-            continue
-        filtered.append(t.to_dict())
-    return filtered
+    if tag:
+        return [t.to_dict() for t in tasks if t.tags and tag in t.tags]
+    return [t.to_dict() for t in tasks]
 
 @router.post("", response_model=TaskResponse)
 async def create_task(
     task_in: TaskCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_required_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     task_id = f"task-{uuid.uuid4().hex[:8]}"
     new_task = Task(
         id=task_id,
-        user_id=current_user.id if current_user else None,
+        user_id=current_user.id,
         title=task_in.title,
         description=task_in.description,
         status=task_in.status,
@@ -65,7 +67,7 @@ async def create_task(
 @router.post("/batch", response_model=List[TaskResponse])
 async def create_tasks_batch(
     batch_in: BatchTasksCreate,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(get_required_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     created_items = []
@@ -73,7 +75,7 @@ async def create_tasks_batch(
         task_id = f"task-{uuid.uuid4().hex[:8]}"
         t = Task(
             id=task_id,
-            user_id=current_user.id if current_user else None,
+            user_id=current_user.id,
             title=item.title,
             description=item.description,
             status=item.status,
@@ -95,6 +97,7 @@ async def create_tasks_batch(
 async def update_task(
     task_id: str,
     task_in: TaskUpdate,
+    current_user: User = Depends(get_required_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(Task).where(Task.id == task_id)
@@ -102,6 +105,8 @@ async def update_task(
     task = res.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if task.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this task")
 
     update_data = task_in.model_dump(exclude_unset=True)
     if "dueDate" in update_data:
@@ -122,6 +127,7 @@ async def update_task(
 async def update_task_status(
     task_id: str,
     status_in: TaskStatusUpdate,
+    current_user: User = Depends(get_required_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(Task).where(Task.id == task_id)
@@ -129,6 +135,8 @@ async def update_task_status(
     task = res.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if task.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this task")
 
     task.status = status_in.status
     await db.commit()
@@ -138,6 +146,7 @@ async def update_task_status(
 @router.delete("/{task_id}")
 async def delete_task(
     task_id: str,
+    current_user: User = Depends(get_required_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(Task).where(Task.id == task_id)
@@ -145,6 +154,8 @@ async def delete_task(
     task = res.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if task.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this task")
 
     await db.delete(task)
     await db.commit()

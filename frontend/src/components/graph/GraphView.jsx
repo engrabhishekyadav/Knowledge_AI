@@ -55,18 +55,23 @@ export const GraphView = () => {
       }
     });
 
-    // Note-to-Note simulated vector similarity links
+    // Note-to-Note dynamic Jaccard tag similarity and category affinity links
     for (let i = 0; i < safeNotes.length; i++) {
       for (let j = i + 1; j < safeNotes.length; j++) {
         const tagsA = safeNotes[i].tags || [];
         const tagsB = safeNotes[j].tags || [];
         const sharedTags = tagsA.filter(t => tagsB.includes(t));
-        if (sharedTags.length > 0 || safeNotes[i].category === safeNotes[j].category) {
+        const allTags = Array.from(new Set([...tagsA, ...tagsB]));
+        const categoryMatch = Boolean(safeNotes[i].category && safeNotes[i].category === safeNotes[j].category);
+
+        if (sharedTags.length > 0 || categoryMatch) {
+          const jaccard = allTags.length > 0 ? sharedTags.length / allTags.length : 0;
+          const dynamicSim = Math.min(0.95, (categoryMatch ? 0.30 : 0.0) + (jaccard * 0.65) + 0.05);
           links.push({
             source: safeNotes[i].id,
             target: safeNotes[j].id,
             type: 'similarity',
-            similarity: 0.82
+            similarity: parseFloat(dynamicSim.toFixed(2))
           });
         }
       }

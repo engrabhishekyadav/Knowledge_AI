@@ -247,7 +247,7 @@ export const LandingPage = () => {
                 Built from the ground up with resilient architecture
               </h3>
               <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                Connect seamlessly to your local PostgreSQL server or cloud instances, with zero configuration fallback to SQLite.
+                Connect seamlessly to your PostgreSQL server with native pgvector cosine indexing and hybrid search.
               </p>
               <div className="pt-2">
                 <button

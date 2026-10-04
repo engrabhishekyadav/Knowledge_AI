@@ -2,18 +2,18 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 class AiAction(BaseModel):
-    type: str = Field(..., example="ADD_TASKS") # ADD_TASKS, INSERT_SUMMARY, VIEW_DOCS
-    label: str = Field(..., example="Add 3 tasks to Kanban")
+    type: str = Field(..., json_schema_extra={"example": "ADD_TASKS"}) # ADD_TASKS, INSERT_SUMMARY, VIEW_DOCS
+    label: str = Field(..., json_schema_extra={"example": "Add 3 tasks to Kanban"})
     payload: Any
 
 class ChatRequest(BaseModel):
-    prompt: str = Field(..., example="Summarize this note and extract tasks")
+    prompt: str = Field(..., json_schema_extra={"example": "Summarize this note and extract tasks"})
     noteId: Optional[str] = None
     sessionId: Optional[str] = "default"
 
 class ChatMessageCreate(BaseModel):
-    sender: str = Field(..., example="user") # 'user' | 'ai'
-    text: str = Field(..., example="Can you summarize this note?")
+    sender: str = Field(..., json_schema_extra={"example": "user"}) # 'user' | 'ai'
+    text: str = Field(..., json_schema_extra={"example": "Can you summarize this note?"})
     noteId: Optional[str] = None
     sessionId: Optional[str] = "default"
     actions: Optional[List[Dict[str, Any]]] = None
@@ -21,6 +21,7 @@ class ChatMessageCreate(BaseModel):
 
 class ChatMessageOut(BaseModel):
     id: str
+    userId: Optional[str] = None
     sessionId: str
     noteId: Optional[str] = None
     sender: str
@@ -36,7 +37,7 @@ class ChatResponse(BaseModel):
     timestamp: str
 
 class ExtractTasksRequest(BaseModel):
-    content: str = Field(..., example="- [ ] Implement cosine distance")
+    content: str = Field(..., json_schema_extra={"example": "- [ ] Implement cosine distance"})
     noteId: Optional[str] = None
     noteTitle: Optional[str] = None
 
@@ -47,3 +48,5 @@ class HealthResponse(BaseModel):
     llmProvider: str
     llmModel: str
     vectorDimension: int
+    geminiEmbeddingConfigured: Optional[bool] = False
+

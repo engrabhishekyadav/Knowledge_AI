@@ -10,7 +10,9 @@ from sqlalchemy import select
 from app.core.database import init_db_engine
 from app.models.note import Note
 from app.models.task import Task
-from app.services.embedding import generate_embedding
+from app.models.user import User
+from app.services.auth import hash_password
+from app.services.rag import index_note_chunks
 from app.core.config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -157,29 +159,48 @@ INITIAL_TASKS = [
 async def seed():
     session_maker = await init_db_engine()
     async with session_maker() as db:
-        # Check existing notes
+        # 1. Ensure default admin user exists
+        res = await db.execute(select(User).where(User.id == "user-demo-admin"))
+        demo_user = res.scalar_one_or_none()
+        if not demo_user:
+            demo_user = User(
+                id="user-demo-admin",
+                email="admin@knowledgeai.internal",
+                full_name="System Admin",
+                hashed_password=hash_password("admin123")
+            )
+            db.add(demo_user)
+            await db.commit()
+            logger.info("Seeded default admin user (user-demo-admin).")
+        
+        # 2. Check existing notes
         res = await db.execute(select(Note))
         existing_notes = res.scalars().all()
         if not existing_notes:
-            logger.info("Seeding initial notes...")
+            logger.info("Seeding initial notes and indexing document chunks...")
             for n_data in INITIAL_NOTES:
-                emb = generate_embedding(f"{n_data['title']} {n_data['content']}", settings.VECTOR_DIMENSION)
                 note = Note(
                     id=n_data["id"],
+                    user_id=demo_user.id,
                     title=n_data["title"],
                     content=n_data["content"],
                     category=n_data["category"],
                     tags=n_data["tags"],
                     is_favorite=n_data["is_favorite"],
-                    embedding=emb
+                    embedding=None
                 )
                 db.add(note)
             await db.commit()
-            logger.info(f"Seeded {len(INITIAL_NOTES)} notes.")
+
+            # Index semantic chunks with pgvector embeddings
+            for n_data in INITIAL_NOTES:
+                await index_note_chunks(db, n_data["id"], n_data["content"])
+
+            logger.info(f"Seeded and chunk-indexed {len(INITIAL_NOTES)} notes.")
         else:
             logger.info(f"Database already contains {len(existing_notes)} notes. Skipping notes seed.")
 
-        # Check existing tasks
+        # 3. Check existing tasks
         res = await db.execute(select(Task))
         existing_tasks = res.scalars().all()
         if not existing_tasks:
@@ -187,6 +208,7 @@ async def seed():
             for t_data in INITIAL_TASKS:
                 task = Task(
                     id=t_data["id"],
+                    user_id=demo_user.id,
                     title=t_data["title"],
                     description=t_data["description"],
                     status=t_data["status"],

@@ -21,16 +21,38 @@ class Settings(BaseSettings):
     OPENROUTER_FALLBACK_MODEL: str = "nvidia/nemotron-3.5-lightning:free"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     
-    # Database Settings
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgre123@localhost:5432/knowledge_ai"
-    SQLITE_FALLBACK_URL: str = "sqlite+aiosqlite:///./knowledge_ai.db"
+    # Security & Auth Settings
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    MAX_UPLOAD_SIZE_BYTES: int = 15 * 1024 * 1024  # 15 MB
+
+    # Database Settings (PostgreSQL with pgvector)
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgre123@localhost:5433/knowledge_ai"
     
-    # Vector Search
-    VECTOR_DIMENSION: int = 384
+    # Vector Search & Embeddings
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+    VECTOR_DIMENSION: int = 768
     HYBRID_DEFAULT_WEIGHT: float = 0.65
     
     # CORS
     CORS_ORIGINS: Union[List[str], str] = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"]
+
+    @field_validator("JWT_SECRET_KEY", mode="before")
+    @classmethod
+    def validate_jwt_secret_key(cls, v):
+        insecure_placeholder = "knowledge_ai_production_jwt_secret_key_2026_super_secure"
+        if not v or v == insecure_placeholder or v == "replace_with_a_secure_random_secret_in_production":
+            import secrets
+            import logging
+            generated = secrets.token_hex(32)
+            logging.getLogger("knowledge_ai.config").warning(
+                "JWT_SECRET_KEY not set or using insecure placeholder. "
+                "Generated an ephemeral 256-bit key for this session. "
+                "Set JWT_SECRET_KEY in backend/.env for production."
+            )
+            return generated
+        return v
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

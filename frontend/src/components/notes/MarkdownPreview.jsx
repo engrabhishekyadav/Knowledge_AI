@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 // Configure marked options
 marked.setOptions({
@@ -10,7 +11,8 @@ marked.setOptions({
 export const MarkdownPreview = ({ content }) => {
   const renderedHtml = useMemo(() => {
     try {
-      return marked.parse(content || '');
+      const rawHtml = marked.parse(content || '');
+      return DOMPurify.sanitize(rawHtml);
     } catch {
       return '<p class="text-rose-400">Error rendering Markdown preview.</p>';
     }

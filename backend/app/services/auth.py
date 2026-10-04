@@ -2,17 +2,18 @@ import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-from fastapi import Security, Depends
+from fastapi import Security, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.user import User
 
-SECRET_KEY = "knowledge_ai_production_jwt_secret_key_2026_super_secure"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
+SECRET_KEY = settings.JWT_SECRET_KEY
+ALGORITHM = settings.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 security_bearer = HTTPBearer(auto_error=False)
 
@@ -51,7 +52,7 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
     db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
-    """FastAPI dependency to retrieve the authenticated user from JWT token."""
+    """FastAPI dependency to retrieve the authenticated user from JWT token if provided."""
     if not credentials or not credentials.credentials:
         return None
 
@@ -63,3 +64,16 @@ async def get_current_user(
     stmt = select(User).where(User.id == user_id)
     res = await db.execute(stmt)
     return res.scalar_one_or_none()
+
+async def get_required_current_user(
+    current_user: Optional[User] = Depends(get_current_user)
+) -> User:
+    """FastAPI dependency to strictly enforce authenticated user, raising HTTP 401 if unauthenticated."""
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated or token expired.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    return current_user
+

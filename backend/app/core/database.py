@@ -1,3 +1,5 @@
+import os
+import asyncio
 import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -46,38 +48,67 @@ async def init_db_engine():
         return AsyncSessionLocal
         
     pg_url = settings.DATABASE_URL
+    if not pg_url or "postgresql" not in pg_url:
+        raise RuntimeError(
+            "FATAL: DATABASE_URL must be a valid PostgreSQL connection string. "
+            f"Provided: '{pg_url}'"
+        )
+
+    if not HAS_ASYNCPG and "asyncpg" in pg_url:
+        raise ImportError(
+            "asyncpg is not installed. Please install it using 'pip install asyncpg' "
+            "to connect to PostgreSQL."
+        )
+
+    # 1. Ensure database exists on the PostgreSQL server
     try:
-        if not HAS_ASYNCPG and "asyncpg" in pg_url:
-            raise ImportError("asyncpg is not installed in current environment")
-
-        # 1. Ensure database exists
         await ensure_pg_database_exists(pg_url)
+    except Exception as check_err:
+        logger.warning(f"Database existence verification notice: {check_err}")
 
-        # 2. Connect to primary PostgreSQL
-        test_engine = create_async_engine(
+    # 2. Connect to PostgreSQL with pgvector
+    try:
+        pg_engine = create_async_engine(
             pg_url,
             echo=False,
             future=True,
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+            pool_recycle=1800,
             connect_args={"timeout": 5} if "asyncpg" in pg_url else {}
         )
-        async with test_engine.connect() as conn:
-            if "postgresql" in pg_url:
-                try:
-                    await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-                    await conn.commit()
-                    logger.info("Verified/enabled 'pgvector' extension on PostgreSQL.")
-                except Exception as ext_err:
-                    logger.warning(f"Note regarding pgvector extension: {ext_err}")
-        
-        engine = test_engine
+        async with pg_engine.connect() as conn:
+            # Verify and enable pgvector extension
+            try:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                await conn.commit()
+                logger.info("Verified/enabled 'pgvector' extension on PostgreSQL.")
+            except Exception as ext_err:
+                logger.error(f"Failed to enable 'vector' extension on PostgreSQL: {ext_err}")
+                raise RuntimeError(
+                    f"PostgreSQL pgvector extension error: {ext_err}. "
+                    "Ensure your PostgreSQL instance has pgvector installed."
+                ) from ext_err
+
+        engine = pg_engine
         active_db_type = "postgresql_pgvector"
-        logger.info("Connected successfully to PostgreSQL database ('knowledge_ai')!")
+        logger.info("Connected successfully to PostgreSQL database with pgvector!")
     except Exception as e:
-        logger.warning(f"Primary PostgreSQL connection note ({e}). Activating SQLite async fallback engine...")
-        sqlite_url = settings.SQLITE_FALLBACK_URL
-        engine = create_async_engine(sqlite_url, echo=False, future=True)
-        active_db_type = "sqlite_fallback"
-        logger.info(f"SQLite fallback engine initialized at {sqlite_url}")
+        error_msg = (
+            "\n" + "=" * 70 + "\n"
+            "CRITICAL DATABASE CONNECTION FAILURE:\n"
+            f"Could not connect to PostgreSQL at: {pg_url}\n"
+            f"Exact Error: {e}\n\n"
+            "Troubleshooting Steps:\n"
+            "1. Start the PostgreSQL container with pgvector using Docker:\n"
+            "   docker compose up -d postgres\n"
+            "2. Ensure port 5433 (or your configured port) is reachable.\n"
+            "3. Verify your DATABASE_URL in backend/.env.\n"
+            + "=" * 70 + "\n"
+        )
+        logger.critical(error_msg)
+        raise RuntimeError(error_msg) from e
 
     AsyncSessionLocal = async_sessionmaker(
         bind=engine,
@@ -87,45 +118,34 @@ async def init_db_engine():
         autoflush=False
     )
 
-    # Auto-create all tables in database
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Ensure migration columns exist on tables
-        if "postgresql" in pg_url and active_db_type != "sqlite_fallback":
-            try:
-                await conn.execute(text("ALTER TABLE notes ADD COLUMN IF NOT EXISTS user_id VARCHAR(64);"))
-                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notes_user_id ON notes (user_id);"))
-            except Exception as e:
-                logger.debug(f"notes user_id column note: {e}")
-
-            try:
-                await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id VARCHAR(64);"))
-                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tasks_user_id ON tasks (user_id);"))
-            except Exception as e:
-                logger.debug(f"tasks user_id column note: {e}")
-
-            try:
-                await conn.execute(text("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS note_id VARCHAR(64);"))
-                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_messages_note_id ON chat_messages (note_id);"))
-            except Exception as e:
-                logger.debug(f"chat_messages note_id column note: {e}")
-        else:
-            # SQLite fallback schema migrations
-            try:
-                await conn.execute(text("ALTER TABLE notes ADD COLUMN user_id VARCHAR(64);"))
-            except Exception:
-                pass
-            try:
-                await conn.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR(64);"))
-            except Exception:
-                pass
-            try:
-                await conn.execute(text("ALTER TABLE chat_messages ADD COLUMN note_id VARCHAR(64);"))
-            except Exception:
-                pass
-        logger.info("Database tables verified/created in database.")
+    # Synchronize database schema via Alembic migrations
+    await run_alembic_migrations()
 
     return AsyncSessionLocal
+
+async def run_alembic_migrations():
+    """
+    Applies all Alembic migrations up to head programmatically.
+    Ensures that database tables, vector indexes, and alembic_version revision history remain synchronized.
+    """
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
+    if not os.path.exists(alembic_ini_path):
+        raise RuntimeError(f"alembic.ini not found at {alembic_ini_path}. Cannot migrate database schema.")
+
+    try:
+        from alembic.config import Config
+        from alembic import command
+        
+        alembic_cfg = Config(alembic_ini_path)
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+        
+        logger.info("Executing Alembic migrations (upgrade head)...")
+        await asyncio.to_thread(command.upgrade, alembic_cfg, "head")
+        logger.info("Alembic migrations completed successfully.")
+    except Exception as mig_err:
+        logger.error(f"Alembic programmatic migration failure: {mig_err}")
+        raise RuntimeError(f"Database schema migration failed: {mig_err}") from mig_err
 
 def async_session_factory() -> AsyncSession:
     global AsyncSessionLocal
@@ -146,4 +166,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+def get_active_db_type() -> str:
+    """Returns the currently active database engine type."""
+    global active_db_type
+    return active_db_type
 

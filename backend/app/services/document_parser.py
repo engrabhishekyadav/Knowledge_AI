@@ -61,17 +61,38 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         logger.error(f"Error parsing DOCX: {e}")
         return f"Error extracting DOCX text: {str(e)}"
 
+def sanitize_filename(filename: str) -> str:
+    """Sanitizes filename to prevent directory traversal or markdown injection."""
+    import os
+    # Strip any directory components
+    base = os.path.basename(filename.replace("\\", "/"))
+    # Recursively strip directory traversal dots
+    while ".." in base:
+        base = base.replace("..", "")
+    # Strip dangerous characters, keeping alphanumeric, spaces, dots, dashes, and underscores
+    clean = re.sub(r"[^\w\s\-\.]", "_", base)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    # Strip any leading dots to prevent hidden files
+    clean = clean.lstrip("._ ")
+    return clean[:100] or "uploaded_document"
+
 def parse_document(file_bytes: bytes, filename: str) -> Dict[str, Any]:
     """
     Parses an uploaded file (PDF, DOCX, TXT, MD) and returns formatted markdown with metadata.
+    Validates file signatures to prevent malicious payload ingestion.
     """
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    raw_title = filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
+    safe_filename = sanitize_filename(filename)
+    ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
+    raw_title = safe_filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
 
     if ext == "pdf":
+        if not file_bytes.startswith(b"%PDF"):
+            raise ValueError("File content does not match a valid PDF format.")
         body = extract_text_from_pdf(file_bytes)
         doctype = "PDF Document"
     elif ext in ["docx", "doc"]:
+        if ext == "docx" and not file_bytes.startswith(b"PK\x03\x04"):
+            raise ValueError("File content does not match a valid Word document format.")
         body = extract_text_from_docx(file_bytes)
         doctype = "Word Document"
     elif ext in ["txt", "md", "markdown"]:
@@ -81,16 +102,11 @@ def parse_document(file_bytes: bytes, filename: str) -> Dict[str, Any]:
             body = file_bytes.decode("latin-1", errors="ignore")
         doctype = "Markdown Document" if ext in ["md", "markdown"] else "Text Document"
     else:
-        try:
-            body = file_bytes.decode("utf-8")
-            doctype = "Uploaded Document"
-        except Exception:
-            body = "Unsupported document format."
-            doctype = "Binary File"
+        raise ValueError(f"Unsupported file type: .{ext}. Allowed formats are PDF, DOCX, TXT, and MD.")
 
     # Construct formatted Markdown document
     markdown_content = f"# {raw_title}\n\n"
-    markdown_content += f"> 📄 **Imported from**: `{filename}` ({doctype})\n"
+    markdown_content += f"> 📄 **Imported from**: `{safe_filename}` ({doctype})\n"
     markdown_content += f"> 📅 **Uploaded**: Auto-processed into workspace\n\n"
     markdown_content += "---\n\n"
     markdown_content += body
@@ -99,7 +115,7 @@ def parse_document(file_bytes: bytes, filename: str) -> Dict[str, Any]:
 
     return {
         "title": raw_title,
-        "filename": filename,
+        "filename": safe_filename,
         "doctype": doctype,
         "content": markdown_content,
         "wordCount": words_count

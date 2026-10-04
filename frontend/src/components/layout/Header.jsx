@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Button } from '../common/Button';
+import { ConnectionStatusBadge } from '../common/ConnectionStatusBadge';
 
 export const Header = ({ onOpenNewTaskModal }) => {
   const { 
@@ -63,6 +64,9 @@ export const Header = ({ onOpenNewTaskModal }) => {
 
       {/* Right Actions & User Profile */}
       <div className="flex items-center gap-2.5">
+        {/* Backend & Database Health Status Indicator */}
+        <ConnectionStatusBadge />
+
         {/* Light / Dark Mode Toggle Button */}
         <button
           onClick={toggleTheme}

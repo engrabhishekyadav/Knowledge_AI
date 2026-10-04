@@ -1,15 +1,15 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class TaskBase(BaseModel):
-    title: str = Field(..., example="Implement LangGraph tool-calling")
-    description: str = Field(default="", example="Details on task execution")
-    status: str = Field(default="todo", example="todo") # todo, in_progress, done
-    priority: str = Field(default="medium", example="high") # urgent, high, medium, low
-    dueDate: Optional[str] = Field(default=None, example="2026-09-15")
-    linkedNoteId: Optional[str] = Field(default=None, example="note-1")
-    linkedNoteTitle: Optional[str] = Field(default=None, example="🧠 AI Agent Architecture")
-    tags: List[str] = Field(default_factory=list, example=["AI", "Feature"])
+    title: str = Field(..., json_schema_extra={"example": "Implement LangGraph tool-calling"})
+    description: str = Field(default="", json_schema_extra={"example": "Details on task execution"})
+    status: str = Field(default="todo", json_schema_extra={"example": "todo"}) # todo, in_progress, done
+    priority: str = Field(default="medium", json_schema_extra={"example": "high"}) # urgent, high, medium, low
+    dueDate: Optional[str] = Field(default=None, json_schema_extra={"example": "2026-09-15"})
+    linkedNoteId: Optional[str] = Field(default=None, json_schema_extra={"example": "note-1"})
+    linkedNoteTitle: Optional[str] = Field(default=None, json_schema_extra={"example": "AI Agent Architecture"})
+    tags: List[str] = Field(default_factory=list, json_schema_extra={"example": ["AI", "Feature"]})
 
 class TaskCreate(TaskBase):
     pass
@@ -25,15 +25,16 @@ class TaskUpdate(BaseModel):
     tags: Optional[List[str]] = None
 
 class TaskStatusUpdate(BaseModel):
-    status: str = Field(..., example="done")
+    status: str = Field(..., json_schema_extra={"example": "done"})
 
 class TaskResponse(TaskBase):
     id: str
+    userId: Optional[str] = None
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BatchTasksCreate(BaseModel):
     tasks: List[TaskCreate]
+
