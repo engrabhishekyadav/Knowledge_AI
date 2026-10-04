@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = 15 * 1024 * 1024  # 15 MB
 
     # Database Settings (PostgreSQL with pgvector)
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgre123@localhost:5433/knowledge_ai"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgre123@localhost:5432/knowledge_ai"
     
     # Vector Search & Embeddings
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
