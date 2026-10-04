@@ -40,7 +40,7 @@ export const LandingPage = () => {
       icon: Kanban,
       color: 'from-purple-500 to-pink-500',
       title: 'Interactive Kanban Board',
-      description: 'Organize execution with To Do and process my name is ABhishek, In Progress, and Done with confetti celebrations.'
+      description: 'Organize execution with To Do, In Progress, and Done with confetti celebrations.'
     },
     {
       icon: Target,
