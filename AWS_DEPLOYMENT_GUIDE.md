@@ -1,148 +1,215 @@
-# AWS EC2 Server Deployment Guide (IP & Port - No Domain Required)
+# AWS EC2 Manual Deployment Guide (No Docker: PM2 & Systemd)
 
-This guide walks you through deploying **KnowledgeAI** onto an AWS EC2 instance using your instance's public IP address without needing a domain name or SSL certificate.
+Deploy **KnowledgeAI** directly on your AWS Ubuntu EC2 instance using **PM2** and **Systemd** without Docker.
 
 ---
 
-## 1. AWS EC2 Instance Setup
+## 1. AWS Security Group (Ports to Open)
 
-### Recommended Instance Specs
-- **OS**: Ubuntu Server 24.04 LTS or 22.04 LTS
-- **Instance Type**: `t3.small` (2 vCPU, 2 GB RAM) or `t3.medium` (4 GB RAM).
-  > **Note on Free Tier (`t2.micro` / 1GB RAM)**: If using `t2.micro`, you **must** configure 2 GB swap space (detailed in Section 5) to prevent out-of-memory errors during build.
-
-### Configure AWS Security Group (Inbound Rules)
-In your AWS EC2 Console, navigate to **Security Groups** attached to your instance and add these inbound rules:
+In your AWS EC2 Console > **Security Groups** attached to your instance, ensure these Inbound rules are added:
 
 | Type | Protocol | Port Range | Source | Purpose |
-|------|----------|------------|--------|---------|
-| SSH | TCP | `22` | Your IP (or `0.0.0.0/0`) | SSH Terminal Access |
-| Custom TCP | TCP | `5173` | `0.0.0.0/0` | Frontend UI (Docker Compose) |
-| Custom TCP | TCP | `8000` | `0.0.0.0/0` | Backend API & Swagger Docs |
-| HTTP | TCP | `80` | `0.0.0.0/0` | Web Port (if using Nginx) |
+| :--- | :--- | :--- | :--- | :--- |
+| **SSH** | TCP | `22` | Your IP (or `0.0.0.0/0`) | Terminal Access |
+| **Custom TCP** | TCP | `5173` | `0.0.0.0/0` | Frontend Web UI |
+| **Custom TCP** | TCP | `8000` | `0.0.0.0/0` | Backend API & Swagger Docs |
 
 ---
 
-## 2. Connect to Your EC2 Instance via SSH
+## 2. Connect to EC2 (via AWS Browser Console)
 
-On your local machine (Terminal / PowerShell):
+1. Go to **AWS Console** > **EC2** > **Instances**.
+2. Select your instance and click the **Connect** button at the top.
+3. Select **EC2 Instance Connect** tab and click **Connect**.
+4. A browser terminal will open. Run the steps below inside it.
+
+---
+
+## 3. Server Prerequisites Installation (Python, Node.js, PostgreSQL & PM2)
+
+Run these commands in the terminal:
+
 ```bash
-ssh -i /path/to/your-key.pem ubuntu@<YOUR_AWS_PUBLIC_IP>
+# 1. Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# 2. Install Python 3, pip, venv, and build tools
+sudo apt install -y python3 python3-pip python3-venv git curl build-essential
+
+# 3. Install Node.js 20 & PM2
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g pm2
+
+# 4. Install PostgreSQL and pgvector extension
+sudo apt install -y postgresql postgresql-contrib
+
+# Install pgvector (from official apt or source)
+sudo apt install -y postgresql-16-pgvector 2>/dev/null || sudo apt install -y postgresql-14-pgvector 2>/dev/null || {
+  sudo apt install -y postgresql-server-dev-all
+  git clone --branch v0.7.4 https://github.com/pgvector/pgvector.git /tmp/pgvector
+  cd /tmp/pgvector && make && sudo make install && cd -
+}
 ```
 
 ---
 
-## 3. Quick Deployment via Docker Compose (Recommended)
+## 4. Configure PostgreSQL Database
 
-### Step 3.1: Install Docker & Docker Compose on Ubuntu
-Run the following commands on your EC2 instance:
+Create the database user, database, and enable the `vector` extension:
+
 ```bash
-sudo apt-get update && sudo apt-get upgrade -y
-sudo apt-get install -y curl git ca-certificates gnupg lsb-release
-
-# Install Docker Engine
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
-# Allow your user to run docker without sudo
-sudo usermod -aG docker ubuntu
-newgrp docker
+# Set password for postgres user and create database
+sudo -u postgres psql <<EOF
+ALTER USER postgres WITH PASSWORD 'postgre123';
+CREATE DATABASE knowledge_ai;
+\c knowledge_ai;
+CREATE EXTENSION IF NOT EXISTS vector;
+\q
+EOF
 ```
 
-### Step 3.2: Clone Your GitHub Repository
+---
+
+## 5. Clone the Repository
+
 ```bash
+cd ~
 git clone https://github.com/engrabhishekyadav/Knowledge_AI.git
 cd Knowledge_AI
 ```
 
-### Step 3.3: Set Up Environment Variables
-Create the `.env` file from the example:
+---
+
+## 6. Backend Setup (Python + PM2 / Systemd)
+
+### 6.1 Create Virtual Environment & Install Dependencies
+```bash
+cd ~/Knowledge_AI/backend
+
+# Create virtualenv
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 6.2 Configure Backend `.env`
 ```bash
 cp .env.example .env
 nano .env
 ```
-Fill in your configuration:
+Ensure your configuration looks like this:
 ```env
-# Gemini API Key (Required for AI chat & embeddings)
+LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_actual_gemini_api_key
-
-# OpenRouter (Optional fallback)
 OPENROUTER_API_KEY=your_actual_openrouter_api_key
 
-# Generate a strong 64-character hex secret for JWT:
-JWT_SECRET_KEY=9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b
+# PostgreSQL connection string
+DATABASE_URL=postgresql+asyncpg://postgres:postgre123@localhost:5432/knowledge_ai
 
-# Allow all origins (so browser can access from your IP)
+# Security
+JWT_SECRET_KEY=9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b
 CORS_ORIGINS=["*"]
 ```
-Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
+*(Save and exit: `Ctrl + O`, `Enter`, `Ctrl + X`)*
 
-### Step 3.4: Launch the Containers
+### 6.3 Test Database Initialization
 ```bash
-docker compose up -d --build
+# Seed initial tables/data
+python app/seed_data.py
 ```
 
-### Step 3.5: Verify the Running Services
+### 6.4 Start Backend with PM2
 ```bash
-docker compose ps
+pm2 start "venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000" --name "knowledge-backend"
 ```
-You should see:
-- `knowledge_ai_postgres` running on port `5433`
-- `knowledge_ai_backend` running on port `8000`
-- `knowledge_ai_frontend` running on port `5173`
-
-### Step 3.6: Access Your Application
-Open your browser and navigate to:
-- **Frontend App**: `http://<YOUR_AWS_PUBLIC_IP>:5173`
-- **Backend API Docs (Swagger UI)**: `http://<YOUR_AWS_PUBLIC_IP>:8000/docs`
-- **Health Check**: `http://<YOUR_AWS_PUBLIC_IP>:8000/api/v1/health`
 
 ---
 
-## 4. Useful Management Commands
+## 7. Frontend Setup (React/Vite + PM2)
 
-### View Live Logs
+### 7.1 Install Dependencies & Configure API URL
 ```bash
-# All services
-docker compose logs -f
+cd ~/Knowledge_AI/frontend
 
-# Backend only
-docker compose logs -f backend
+# Install node dependencies
+npm install
 
-# Frontend only
-docker compose logs -f frontend
+# Create frontend .env with your EC2 Public IP
+nano .env
+```
+Add the following line (replace `<YOUR_AWS_PUBLIC_IP>` with your instance's actual IP):
+```env
+VITE_API_URL=http://<YOUR_AWS_PUBLIC_IP>:8000
+```
+*(Save and exit: `Ctrl + O`, `Enter`, `Ctrl + X`)*
+
+### 7.2 Build Frontend for Production
+```bash
+npm run build
 ```
 
-### Restart Services
+### 7.3 Serve Frontend with PM2
 ```bash
-docker compose restart
+# PM2 serves the production build directly on port 5173
+pm2 serve dist 5173 --spa --name "knowledge-frontend"
 ```
 
-### Pull Latest Code from GitHub and Redeploy
+---
+
+## 8. Persist PM2 Across System Reboots
+
+Run these two commands so your backend and frontend start automatically if the EC2 instance restarts:
 ```bash
+pm2 save
+pm2 startup
+```
+*(Follow the single command line that `pm2 startup` prints on screen).*
+
+---
+
+## 9. Check Status & Logs
+
+```bash
+# Check if both are online
+pm2 status
+
+# View live backend logs
+pm2 logs knowledge-backend
+
+# View live frontend logs
+pm2 logs knowledge-frontend
+```
+
+---
+
+## 10. Access Your Live Application
+
+Open your web browser and visit:
+- **Frontend Web UI:** `http://<YOUR_AWS_PUBLIC_IP>:5173`
+- **Backend Swagger API Docs:** `http://<YOUR_AWS_PUBLIC_IP>:8000/docs`
+- **Health Endpoint:** `http://<YOUR_AWS_PUBLIC_IP>:8000/api/v1/health`
+
+---
+
+## Updating the App in the Future
+Whenever you push changes to GitHub:
+```bash
+cd ~/Knowledge_AI
 git pull origin main
-docker compose up -d --build
-```
 
-### Stop Services
-```bash
-docker compose down
-```
+# Update backend
+cd backend
+source venv/bin/activate
+pip install -r requirements.txt
+pm2 restart knowledge-backend
 
----
-
-## 5. (Important) Adding Swap Space on Small EC2 Instances
-
-If your EC2 instance has 1GB or 2GB of RAM (like `t2.micro` or `t3.micro`), running npm builds or AI embeddings can trigger the Linux Out-Of-Memory (OOM) killer. Run this once on the EC2 instance to add 2 GB of swap:
-
-```bash
-sudo fallocate -l 2G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-```
-Verify with:
-```bash
-free -h
+# Update frontend
+cd ../frontend
+npm install
+npm run build
+pm2 restart knowledge-frontend
 ```
